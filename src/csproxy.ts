@@ -37,14 +37,22 @@ export class CSProxy extends SProxy {
   static async getCompletedTxRaw(baseUrl: string, txHash: string) {
     let res = await Proxy.getTxProcessStatusRaw(baseUrl, txHash);
     console.log('tx hash', txHash, 'response', res);
+    let retries = 0;
+
     while (!res || res.code !== "successful" || res.data.status === "pending") {
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 250));
       res = await CSProxy.getTxProcessStatusRaw(baseUrl, txHash);
 
       console.log('tx hash', txHash, 'response', res);
 
       if (res.data.status === "pending") {
         await CSProxy.generateBlocks(baseUrl);
+      }
+
+      retries++;
+
+      if (retries > 10) {
+        break;
       }
     }
     return await CSProxy.getTxRaw(baseUrl, txHash, { withResults: true });

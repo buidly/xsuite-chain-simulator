@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, test } from 'vitest';
-import { assertAccount, e, Proxy, SContract, SWallet } from 'xsuite';
+import { afterEach, assert, beforeEach, test } from 'vitest';
+import { assertAccount, d, e, Proxy, SContract, SWallet } from 'xsuite';
 import { mainnetPublicProxyUrl } from 'xsuite/dist/interact/envChain';
 import { CSWorld } from '../src/csworld';
 import { DummySigner, UserSigner } from 'xsuite/dist/world/signer';
@@ -11,21 +11,30 @@ const SYSTEM_DELEGATION_MANAGER_ADDRESS = 'erd1qqqqqqqqqqqqqqqpqqqqqqqqqqqqqqqqq
 
 const LIQUID_STAKING_CONTRACT_ADDRESS = 'erd1qqqqqqqqqqqqqpgq4gzfcw7kmkjy8zsf04ce6dl0auhtzjx078sslvrf4e';
 
-let realContract: any;
-
 let world: CSWorld;
 let deployer: SWallet;
 let address: SWallet;
+let alice: SWallet;
 
 let systemDelegationContract: SContract;
-let contract: SContract;
+let liquidStakingContract: SContract;
 
 beforeEach(async () => {
-  realContract = await Proxy.getSerializableAccountWithKvs(mainnetPublicProxyUrl, LIQUID_STAKING_CONTRACT_ADDRESS);
+  const realContract = await Proxy.getSerializableAccountWithKvs(
+    mainnetPublicProxyUrl,
+    LIQUID_STAKING_CONTRACT_ADDRESS,
+  );
   world = await CSWorld.start();
-  deployer = await world.createWallet();
+
+  // Wallets always need EGLD balance to pay for fees
+  deployer = await world.createWallet({
+    balance: '1000000000000000000', // 1 EGLD
+  });
   address = await world.createWallet({
     balance: '1255000000000000000000', // 1255 EGLD
+  });
+  alice = await world.createWallet({
+    balance: '50000000000000000000', // 50 EGLD
   });
 
   await world.setAccount({
@@ -34,10 +43,11 @@ beforeEach(async () => {
   });
 
   systemDelegationContract = world.newContract(SYSTEM_DELEGATION_MANAGER_ADDRESS);
-  contract = world.newContract(LIQUID_STAKING_CONTRACT_ADDRESS);
+  liquidStakingContract = world.newContract(LIQUID_STAKING_CONTRACT_ADDRESS);
 });
 
 afterEach(async () => {
+  // Having this here so we can access the chain simulator endpoints outside of tests
   // await new Promise((resolve, reject) => {
   //   setTimeout(() => resolve(), 60_000);
   // });
@@ -45,10 +55,21 @@ afterEach(async () => {
   await world.terminate();
 }, 60_000);
 
-test('Test', async () => {
-  // generate 20 blocks to pass an epoch and the smart contract deploys to be enabled
-  await world.generateBlocks(20);
+const extractContract = (tx): SContract => {
+  const events = tx.tx.logs.events;
 
+  for (const event: any of events) {
+    if (event.identifier !== 'SCDeploy') {
+      continue;
+    }
+
+    const address = Buffer.from(event.topics[0], 'base64');
+
+    return world.newContract(address);
+  }
+};
+
+const deployDelegationProvider = async () => {
   let tx = await address.callContract({
     callee: systemDelegationContract,
     funcName: 'createNewDelegationContract',
@@ -56,7 +77,7 @@ test('Test', async () => {
     value: '1250000000000000000000', // 1250 EGLD
     funcArgs: [
       e.U(0), // delegation cap
-      e.U16(3745), // service fee
+      e.U(3745), // service fee
     ],
   });
 
@@ -121,21 +142,59 @@ test('Test', async () => {
     balance: '8455541737203123588', // 5 EGLD remaining initially - fees + rewards
   });
 
-  // assertAccount(await contract.getAccountWithKvs(), {
-  //   hasKvs: [],
-  // });
-}, { timeout: 60_000 });
-
-const extractContract = (tx): SContract => {
-  const events = tx.tx.logs.events;
-
-  for (const event: any of events) {
-    if (event.identifier !== 'SCDeploy') {
-      continue;
-    }
-
-    const address = Buffer.from(event.topics[0], 'base64');
-
-    return world.newContract(address);
-  }
+  return { stakingProviderContract };
 };
+
+const setupLiquidStaking = async (stakingProviderContract: SContract) => {
+  const result = await world.query({
+    callee: stakingProviderContract,
+    funcName: 'getTotalActiveStake',
+  });
+
+  assert(d.U().topDecode(result.returnData[0]) === 11250000000000000000000n);
+
+  console.log('Staking provider stake');
+
+  // TODO: This remains pending indefinitely
+  // await deployer.callContract({
+  //   callee: liquidStakingContract,
+  //   funcName: 'whitelistDelegationContract',
+  //   gasLimit: 510_000_000,
+  //   funcArgs: [
+  //     stakingProviderContract,
+  //     e.U(11250000000000000000000n), // total value locked (11250 EGLD = 10000 EGLD + 1250 EGLD from delegate creation)
+  //     e.U64(1), // nb of nodes,
+  //     e.U(833), // apr
+  //     e.U(3745), // service fee
+  //     e.U(15000000000000000000000n), // 15000 EGLD
+  //   ]
+  // });
+
+  await alice.callContract({
+    callee: liquidStakingContract,
+    funcName: 'delegate',
+    value: 40000000000000000000n, // 40 EGLD,
+    gasLimit: 45_000_000,
+  });
+
+  console.log('Delegate transaction success');
+
+  // Checking of balances is not reliable currently, since on subsequent running of tests the gas cost payed can differ
+  // assertAccount(await alice.getAccountWithKvs(), {
+  //   balance: 9999735213800000000n,
+  //   kvs: [
+  //     e.kvs.Esdts([
+  //       { id: 'SEGLD-3ad2d0', amount: 40000000000000000000n },
+  //     ]),
+  //   ],
+  // });
+};
+
+test('Test', async () => {
+  // generate 20 blocks to pass an epoch and the smart contract deploys to be enabled
+  await world.generateBlocks(20);
+
+  const { stakingProviderContract } = await deployDelegationProvider();
+
+  await setupLiquidStaking(stakingProviderContract);
+}, { timeout: 20_000 });
