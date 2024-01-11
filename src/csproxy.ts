@@ -15,6 +15,7 @@ export class CSProxy extends SProxy {
 
   async sendTx(tx: any): Promise<string> {
     // The chain simulator needs signature to not be empty
+    // TODO: Alternatively edit the DummySigner to return this instead of an empty string
     if (!tx.signature) {
       tx.signature = '00';
     }
@@ -36,14 +37,14 @@ export class CSProxy extends SProxy {
 
   static async getCompletedTxRaw(baseUrl: string, txHash: string) {
     let res = await Proxy.getTxProcessStatusRaw(baseUrl, txHash);
-    console.log('tx hash', txHash, 'response', res);
+    console.log('pending: tx hash', txHash, 'response', res);
     let retries = 0;
 
     while (!res || res.code !== "successful" || res.data.status === "pending") {
       await new Promise((r) => setTimeout(r, 250));
       res = await CSProxy.getTxProcessStatusRaw(baseUrl, txHash);
 
-      console.log('tx hash', txHash, 'response', res);
+      console.log('pending: tx hash', txHash, 'response', res);
 
       if (res.data.status === "pending") {
         await CSProxy.generateBlocks(baseUrl);
@@ -51,6 +52,7 @@ export class CSProxy extends SProxy {
 
       retries++;
 
+      // Prevent too many retries in case something does not work as expected
       if (retries > 10) {
         break;
       }
@@ -69,8 +71,7 @@ export class CSProxy extends SProxy {
   }
 
   static async setAccount(baseUrl: string, account: Account, autoGenerateBlocks: boolean = true) {
-    console.log('Setting account', account);
-    console.log('Actual request', [accountToRawAccount(account)]);
+    console.log('Setting account', [accountToRawAccount(account)]);
 
     const result = Proxy.fetch(
       `${baseUrl}/simulator/set-state`,

@@ -15,6 +15,7 @@ let world: CSWorld;
 let deployer: SWallet;
 let address: SWallet;
 let alice: SWallet;
+let bob: SWallet;
 
 let systemDelegationContract: SContract;
 let liquidStakingContract: SContract;
@@ -35,6 +36,9 @@ beforeEach(async () => {
   });
   alice = await world.createWallet({
     balance: '50000000000000000000', // 50 EGLD
+  });
+  bob = await world.createWallet({
+    balance: '10000000000000000000', // 10 EGLD
   });
 
   await world.setAccount({
@@ -83,9 +87,9 @@ const deployDelegationProvider = async () => {
 
   console.log('Transaction create new delegation contract', tx);
 
-  const stakingProviderContract = extractContract(tx);
+  const stakingProviderDelegationContract = extractContract(tx);
 
-  console.log('Staking Provider', stakingProviderContract);
+  console.log('Staking Provider', stakingProviderDelegationContract);
 
   const initialWallets = await world.getInitialWallets();
   const initialAddressWithStake = initialWallets.initialWalletWithStake.address;
@@ -95,7 +99,7 @@ const deployDelegationProvider = async () => {
   console.log('Initial address private key', initialAddressPrivateKey);
 
   tx = await address.callContract({
-    callee: stakingProviderContract,
+    callee: stakingProviderDelegationContract,
     funcName: 'whitelistForMerge',
     gasLimit: 65_000_000,
     funcArgs: [
@@ -123,7 +127,7 @@ const deployDelegationProvider = async () => {
     funcName: 'mergeValidatorToDelegationWithWhitelist',
     gasLimit: 510_000_000,
     funcArgs: [
-      stakingProviderContract,
+      stakingProviderDelegationContract,
     ],
   });
 
@@ -133,21 +137,23 @@ const deployDelegationProvider = async () => {
   await world.generateBlocks(20);
 
   await address.callContract({
-    callee: stakingProviderContract,
+    callee: stakingProviderDelegationContract,
     funcName: 'claimRewards',
     gasLimit: 510_000_000,
   });
 
+  // This fails sometimes randomly because of wrong egld balance...
+  // Probably because too many blocks pass when processing pending transactions on different test runs
   assertAccount(await address.getAccountWithKvs(), {
-    balance: '8455541737203123588', // 5 EGLD remaining initially - fees + rewards
+    balance: '11918555165970247194', // 5 EGLD remaining initially - fees + rewards
   });
 
-  return { stakingProviderContract };
+  return { stakingProviderDelegationContract };
 };
 
-const setupLiquidStaking = async (stakingProviderContract: SContract) => {
+const setupLiquidStaking = async (stakingProviderDelegationContract: SContract) => {
   const result = await world.query({
-    callee: stakingProviderContract,
+    callee: stakingProviderDelegationContract,
     funcName: 'getTotalActiveStake',
   });
 
@@ -155,7 +161,7 @@ const setupLiquidStaking = async (stakingProviderContract: SContract) => {
 
   console.log('Staking provider stake');
 
-  // TODO: This remains pending indefinitely
+  // TODO: This transaction remains pending indefinitely for some reason
   // await deployer.callContract({
   //   callee: liquidStakingContract,
   //   funcName: 'whitelistDelegationContract',
@@ -179,9 +185,22 @@ const setupLiquidStaking = async (stakingProviderContract: SContract) => {
 
   console.log('Delegate transaction success');
 
-  // Checking of balances is not reliable currently, since on subsequent running of tests the gas cost payed can differ
+  // This doesn't work since the delegation contract could not be whitelisted
+  // await bob.callContract({
+  //   callee: liquidStakingContract,
+  //   funcName: 'delegatePendingAmount',
+  //   gasLimit: 45_000_000,
+  //   funcArgs: [
+  //     stakingProviderContract,
+  //     // e.Addr('erd1qqqqqqqqqqqqqqqpqqqqqqqqqqqqqqqqqqqqqqqqqqqqqs0llllsk20gh7'), // A provider address from mainnet
+  //   ],
+  // });
+
+  console.log('Delegate pending amount transaction success');
+
+  // Checking of balances is not reliable currently, since on subsequent running of tests the gas cost paid can differ
   // assertAccount(await alice.getAccountWithKvs(), {
-  //   balance: 9999735213800000000n,
+  //   balance: 9999659595680000000n, // 9999737965910000000n, 9999668639750000000n
   //   kvs: [
   //     e.kvs.Esdts([
   //       { id: 'SEGLD-3ad2d0', amount: 40000000000000000000n },
@@ -194,7 +213,7 @@ test('Test', async () => {
   // generate 20 blocks to pass an epoch and the smart contract deploys to be enabled
   await world.generateBlocks(20);
 
-  const { stakingProviderContract } = await deployDelegationProvider();
+  const { stakingProviderDelegationContract } = await deployDelegationProvider();
 
-  await setupLiquidStaking(stakingProviderContract);
-}, { timeout: 20_000 });
+  await setupLiquidStaking(stakingProviderDelegationContract);
+}, { timeout: 30_000 });

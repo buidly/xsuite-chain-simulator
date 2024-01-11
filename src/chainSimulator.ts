@@ -30,7 +30,8 @@ export const startChainSimulator = (port?: number): Promise<string> => {
       if (match) {
         clearTimeout(timeout);
 
-        resolve(`http://localhost:${port}`);
+        // Wait a bit more after to make sure it is really started
+        setTimeout(() => resolve(`http://localhost:${port}`), 500);
       }
     });
 

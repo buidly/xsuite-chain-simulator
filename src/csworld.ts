@@ -53,7 +53,7 @@ export class CSWorld extends SWorld {
     walletCounter += 1;
 
     console.log('loading keystore');
-    // TODO: Seems that signature is not checked for chain simulator, so this won't be needed
+    // TODO: Seems that signature is not checked for chain simulator, so this won't be needed in the end
     const keystore = await KeystoreSigner.fromFile_unsafe(path.join(__dirname, 'wallet.json'), '', walletCounter);
     console.log('keystore loaded');
     const wallet = this.newWallet(keystore);
