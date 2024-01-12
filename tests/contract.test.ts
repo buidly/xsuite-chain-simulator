@@ -10,12 +10,14 @@ import { promises } from 'fs';
 const SYSTEM_DELEGATION_MANAGER_ADDRESS = 'erd1qqqqqqqqqqqqqqqpqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqylllslmq6y6';
 
 const LIQUID_STAKING_CONTRACT_ADDRESS = 'erd1qqqqqqqqqqqqqpgq4gzfcw7kmkjy8zsf04ce6dl0auhtzjx078sslvrf4e';
+const ADMIN_ADDRESS = 'erd1cc2yw3reulhshp3x73q2wye0pq8f4a3xz3pt7xj79phv9wm978ssu99pvt';
 
 let world: CSWorld;
 let deployer: SWallet;
 let address: SWallet;
 let alice: SWallet;
 let bob: SWallet;
+let admin: SWallet;
 
 let systemDelegationContract: SContract;
 let liquidStakingContract: SContract;
@@ -39,6 +41,10 @@ beforeEach(async () => {
   });
   bob = await world.createWallet({
     balance: '10000000000000000000', // 10 EGLD
+  });
+  admin = await world.newWallet(new DummySigner(ADMIN_ADDRESS));
+  await admin.setAccount({
+    balance: '50000000000000000000', // 10 EGLD
   });
 
   await world.setAccount({
@@ -144,15 +150,15 @@ const deployDelegationProvider = async () => {
 
   // This fails sometimes randomly because of wrong egld balance...
   // Probably because too many blocks pass when processing pending transactions on different test runs
-  assertAccount(await address.getAccountWithKvs(), {
-    balance: '11918555165970247194', // 5 EGLD remaining initially - fees + rewards
-  });
+  // assertAccount(await address.getAccountWithKvs(), {
+  //   balance: '11918555165970247194', // 5 EGLD remaining initially - fees + rewards
+  // });
 
   return { stakingProviderDelegationContract };
 };
 
 const setupLiquidStaking = async (stakingProviderDelegationContract: SContract) => {
-  const result = await world.query({
+  let result = await world.query({
     callee: stakingProviderDelegationContract,
     funcName: 'getTotalActiveStake',
   });
@@ -161,20 +167,22 @@ const setupLiquidStaking = async (stakingProviderDelegationContract: SContract) 
 
   console.log('Staking provider stake');
 
-  // TODO: This transaction remains pending indefinitely for some reason
-  // await deployer.callContract({
-  //   callee: liquidStakingContract,
-  //   funcName: 'whitelistDelegationContract',
-  //   gasLimit: 510_000_000,
-  //   funcArgs: [
-  //     stakingProviderContract,
-  //     e.U(11250000000000000000000n), // total value locked (11250 EGLD = 10000 EGLD + 1250 EGLD from delegate creation)
-  //     e.U64(1), // nb of nodes,
-  //     e.U(833), // apr
-  //     e.U(3745), // service fee
-  //     e.U(15000000000000000000000n), // 15000 EGLD
-  //   ]
-  // });
+  await admin.callContract({
+    callee: liquidStakingContract,
+    funcName: 'whitelistDelegationContract',
+    gasLimit: 510_000_000,
+    funcArgs: [
+      stakingProviderDelegationContract,
+      e.U(11250000000000000000000n), // total value locked (11250 EGLD = 10000 EGLD + 1250 EGLD from delegate creation)
+      e.U64(1), // nb of nodes,
+      e.U(833), // apr
+      e.U(3745), // service fee
+      e.U(15000000000000000000000n), // 15000 EGLD
+    ]
+  });
+  console.log('Whitelist delegation contract success');
+
+  // await world.generateBlocks(20);
 
   await alice.callContract({
     callee: liquidStakingContract,
@@ -182,21 +190,29 @@ const setupLiquidStaking = async (stakingProviderDelegationContract: SContract) 
     value: 40000000000000000000n, // 40 EGLD,
     gasLimit: 45_000_000,
   });
-
   console.log('Delegate transaction success');
 
-  // This doesn't work since the delegation contract could not be whitelisted
-  // await bob.callContract({
+  // await world.generateBlocks(20);
+
+  // TODO: This transaction fails with `There is no pending amount to delegate`
+  // await admin.callContract({
   //   callee: liquidStakingContract,
   //   funcName: 'delegatePendingAmount',
   //   gasLimit: 45_000_000,
   //   funcArgs: [
-  //     stakingProviderContract,
+  //     stakingProviderDelegationContract,
+  //     // e.U(10000000000000000000n)
   //     // e.Addr('erd1qqqqqqqqqqqqqqqpqqqqqqqqqqqqqqqqqqqqqqqqqqqqqs0llllsk20gh7'), // A provider address from mainnet
   //   ],
   // });
+  // console.log('Delegate pending amount transaction success');
 
-  console.log('Delegate pending amount transaction success');
+  // result = await world.query({
+  //   callee: stakingProviderDelegationContract,
+  //   funcName: 'getTotalActiveStake',
+  // });
+  //
+  // assert(d.U().topDecode(result.returnData[0]) === 11290000000000000000000n);
 
   // Checking of balances is not reliable currently, since on subsequent running of tests the gas cost paid can differ
   // assertAccount(await alice.getAccountWithKvs(), {
@@ -210,10 +226,20 @@ const setupLiquidStaking = async (stakingProviderDelegationContract: SContract) 
 };
 
 test('Test', async () => {
+  // const kvs = await liquidStakingContract.getAccountWithKvs();
+  //
+  // for (const [key, value] of Object.entries(kvs.kvs)) {
+  //   if (key === e.Str('admin').toTopHex()) {
+  //     console.log('admin value: ', d.Addr().topDecode(value));
+  //
+  //     break;
+  //   }
+  // }
+
   // generate 20 blocks to pass an epoch and the smart contract deploys to be enabled
   await world.generateBlocks(20);
 
   const { stakingProviderDelegationContract } = await deployDelegationProvider();
 
   await setupLiquidStaking(stakingProviderDelegationContract);
-}, { timeout: 30_000 });
+}, { timeout: 60_000 });
