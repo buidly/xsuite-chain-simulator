@@ -11,21 +11,25 @@ let walletCounter = 0;
 export class CSWorld extends SWorld {
   proxy: CSProxy;
   sysAcc: SContract;
+  verbose: boolean;
 
   constructor({
     proxy,
     gasPrice,
     explorerUrl,
+    verbose,
   }: {
     proxy: CSProxy;
     gasPrice: number;
     explorerUrl?: string;
+    verbose?: boolean;
   }) {
     super({ proxy, gasPrice, explorerUrl });
-    this.chainId = "chain";
+    this.chainId = 'chain';
 
     this.proxy = proxy;
     this.sysAcc = this.newContract(new Uint8Array(32).fill(255));
+    this.verbose = verbose ?? false;
   }
 
   static new(options: any) {
@@ -33,9 +37,10 @@ export class CSWorld extends SWorld {
       throw new Error('chainId is not undefined.');
     }
     return new CSWorld({
-      proxy: new CSProxy(options.proxyUrl, options.autoGenerateBlocks ?? true),
+      proxy: new CSProxy(options.proxyUrl, options.autoGenerateBlocks ?? true, options.verbose ?? false),
       gasPrice: options.gasPrice ?? 1000000000,
       explorerUrl: options.explorerUrl,
+      verbose: options.verbose,
     });
   }
 
@@ -44,18 +49,23 @@ export class CSWorld extends SWorld {
     gasPrice,
     explorerUrl,
     autoGenerateBlocks,
-  }: { port?: number; gasPrice?: number; explorerUrl?: string; autoGenerateBlocks?: boolean } = {}): Promise<CSWorld> {
+    verbose,
+  }: {
+    port?: number;
+    gasPrice?: number;
+    explorerUrl?: string;
+    autoGenerateBlocks?: boolean,
+    verbose?: boolean
+  } = {}): Promise<CSWorld> {
     const proxyUrl = await startChainSimulator(port);
-    return CSWorld.new({ proxyUrl, gasPrice, explorerUrl, autoGenerateBlocks });
+    return CSWorld.new({ proxyUrl, gasPrice, explorerUrl, autoGenerateBlocks, verbose });
   }
 
   async createWallet(params: Prettify<Omit<Account, 'address'>> = {}) {
     walletCounter += 1;
 
-    console.log('loading keystore');
-    // TODO: Seems that signature is not checked for chain simulator, so this won't be needed in the end
+    // Even though the signature is not checked for chain simulator, we still seem to need real address format for the chain validator
     const keystore = await KeystoreSigner.fromFile_unsafe(path.join(__dirname, 'wallet.json'), '', walletCounter);
-    console.log('keystore loaded');
     const wallet = this.newWallet(keystore);
     await wallet.setAccount(params);
     return wallet;

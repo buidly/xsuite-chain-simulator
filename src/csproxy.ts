@@ -6,11 +6,13 @@ import { kvsToRawKvs } from 'xsuite/dist/data/kvs';
 
 export class CSProxy extends SProxy {
   autoGenerateBlocks: boolean;
+  verbose: boolean;
 
-  constructor(baseUrl: string, autoGenerateBlocks: boolean = true) {
+  constructor(baseUrl: string, autoGenerateBlocks: boolean = true, verbose: boolean = false) {
     super(baseUrl);
 
     this.autoGenerateBlocks = autoGenerateBlocks;
+    this.verbose = verbose;
   }
 
   async sendTx(tx: any): Promise<string> {
@@ -20,7 +22,9 @@ export class CSProxy extends SProxy {
       tx.signature = '00';
     }
 
-    console.log('Sending transaction', tx);
+    if (this.verbose) {
+      console.log('Sending transaction', tx);
+    }
 
     const result = super.sendTx(tx);
 
@@ -30,24 +34,33 @@ export class CSProxy extends SProxy {
       await this.generateBlocks();
     }
 
-    console.log('Transaction sent successfully');
-
     return result;
   }
 
-  static async getCompletedTxRaw(baseUrl: string, txHash: string) {
+  static async getCompletedTxRaw(baseUrl: string, txHash: string, verbose: boolean) {
     let res = await Proxy.getTxProcessStatusRaw(baseUrl, txHash);
-    // console.log('pending: tx hash', txHash, 'response', res);
+
+    if (verbose) {
+      console.log('pending: tx hash', txHash, 'response', res);
+    }
+
     let retries = 0;
 
     while (!res || res.code !== "successful" || res.data.status === "pending") {
       await new Promise((r) => setTimeout(r, 250));
+
+      if (res && res.data && res.data.status === "pending") {
+        if (verbose) {
+          console.log('Generating 1 block...');
+        }
+
+        await CSProxy.generateBlocks(baseUrl);
+      }
+
       res = await CSProxy.getTxProcessStatusRaw(baseUrl, txHash);
 
-      // console.log('pending: tx hash', txHash, 'response', res);
-
-      if (res.data.status === "pending") {
-        await CSProxy.generateBlocks(baseUrl);
+      if (verbose) {
+        console.log('pending: tx hash', txHash, 'response', res);
       }
 
       retries++;
@@ -57,21 +70,26 @@ export class CSProxy extends SProxy {
         break;
       }
     }
+
     return await CSProxy.getTxRaw(baseUrl, txHash, { withResults: true });
   }
 
-  static async getCompletedTx(baseUrl: string, txHash: string) {
-    return unrawTxRes(await CSProxy.getCompletedTxRaw(baseUrl, txHash));
+  static async getCompletedTx(baseUrl: string, txHash: string, verbose: boolean) {
+    return unrawTxRes(await CSProxy.getCompletedTxRaw(baseUrl, txHash, verbose));
   }
 
   async getCompletedTx(txHash: string) {
-    console.log('Get completed tx', txHash);
+    if (this.verbose) {
+      console.log('Get completed tx', txHash);
+    }
 
-    return CSProxy.getCompletedTx(this.baseUrl, txHash);
+    return CSProxy.getCompletedTx(this.baseUrl, txHash, this.verbose);
   }
 
-  static async setAccount(baseUrl: string, account: Account, autoGenerateBlocks: boolean = true) {
-    console.log('Setting account', [accountToRawAccount(account)]);
+  static async setAccount(baseUrl: string, account: Account, autoGenerateBlocks: boolean = true, verbose: boolean = false) {
+    if (verbose) {
+      console.log('Setting account', [accountToRawAccount(account)]);
+    }
 
     const result = Proxy.fetch(
       `${baseUrl}/simulator/set-state`,
@@ -88,7 +106,7 @@ export class CSProxy extends SProxy {
   }
 
   setAccount(account: Account) {
-    return CSProxy.setAccount(this.baseUrl, account, this.autoGenerateBlocks);
+    return CSProxy.setAccount(this.baseUrl, account, this.autoGenerateBlocks, this.verbose);
   }
 
   static setCurrentBlock(baseUrl: string, block: Block) {
@@ -100,7 +118,7 @@ export class CSProxy extends SProxy {
   }
 
   static terminate(baseUrl: string) {
-    // TODO:
+    // Nothing to do here currently
   }
 
   terminate() {
