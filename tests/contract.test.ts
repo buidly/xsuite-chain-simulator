@@ -44,7 +44,7 @@ beforeEach(async () => {
   });
   admin = await world.newWallet(new DummySigner(ADMIN_ADDRESS));
   await admin.setAccount({
-    balance: '50000000000000000000', // 10 EGLD
+    balance: '10000000000000000000', // 10 EGLD
   });
 
   await world.setAccount({
@@ -163,9 +163,11 @@ const setupLiquidStaking = async (stakingProviderDelegationContract: SContract) 
     funcName: 'getTotalActiveStake',
   });
 
-  assert(d.U().topDecode(result.returnData[0]) === 11250000000000000000000n);
+  const stakingProviderStake = d.U().topDecode(result.returnData[0]);
 
-  console.log('Staking provider stake');
+  console.log('Staking provider stake: ', stakingProviderStake);
+
+  assert(stakingProviderStake === 11250000000000000000000n);
 
   await admin.callContract({
     callee: liquidStakingContract,
@@ -175,14 +177,11 @@ const setupLiquidStaking = async (stakingProviderDelegationContract: SContract) 
       stakingProviderDelegationContract,
       e.U(11250000000000000000000n), // total value locked (11250 EGLD = 10000 EGLD + 1250 EGLD from delegate creation)
       e.U64(1), // nb of nodes,
-      e.U(833), // apr
-      e.U(3745), // service fee
-      e.U(15000000000000000000000n), // 15000 EGLD
-    ]
+      e.U(1000), // high apr
+      e.U(500), // low service fee so this delegation contract is selected instead of some other
+    ],
   });
   console.log('Whitelist delegation contract success');
-
-  // await world.generateBlocks(20);
 
   await alice.callContract({
     callee: liquidStakingContract,
@@ -192,27 +191,94 @@ const setupLiquidStaking = async (stakingProviderDelegationContract: SContract) 
   });
   console.log('Delegate transaction success');
 
-  // await world.generateBlocks(20);
+  const delegationContractDataDecoder = d.Tuple({
+    contract: d.Addr(),
+    total_value_locked: d.U(),
+    cap: d.Option(d.U()),
+    nr_nodes: d.U64(),
+    apr: d.U(),
+    service_fee: d.U(),
+    delegation_score: d.U(),
+    pending_to_delegate: d.U(),
+    total_delegated: d.U(),
+    pending_to_undelegate: d.U(),
+    total_undelegated: d.U(),
+    total_withdrawable: d.U(),
+    outdated: d.Bool(),
+    blacklisted: d.Bool(),
+  });
 
-  // TODO: This transaction fails with `There is no pending amount to delegate`
-  // await admin.callContract({
-  //   callee: liquidStakingContract,
-  //   funcName: 'delegatePendingAmount',
-  //   gasLimit: 45_000_000,
-  //   funcArgs: [
-  //     stakingProviderDelegationContract,
-  //     // e.U(10000000000000000000n)
-  //     // e.Addr('erd1qqqqqqqqqqqqqqqpqqqqqqqqqqqqqqqqqqqqqqqqqqqqqs0llllsk20gh7'), // A provider address from mainnet
-  //   ],
-  // });
-  // console.log('Delegate pending amount transaction success');
+  result = await world.query({
+    callee: liquidStakingContract,
+    funcName: 'getDelegationContractData',
+    funcArgs: [
+      stakingProviderDelegationContract,
+    ],
+  });
+  let delegationContractData = delegationContractDataDecoder.topDecode(result.returnData[0]);
+  console.log('Delegation contract data', delegationContractData);
 
-  // result = await world.query({
-  //   callee: stakingProviderDelegationContract,
-  //   funcName: 'getTotalActiveStake',
-  // });
-  //
-  // assert(d.U().topDecode(result.returnData[0]) === 11290000000000000000000n);
+  assert(delegationContractData.pending_to_delegate === 40000000000000000000n);
+
+  await admin.callContract({
+    callee: liquidStakingContract,
+    funcName: 'delegatePendingAmount',
+    gasLimit: 45_000_000,
+    funcArgs: [
+      stakingProviderDelegationContract,
+    ],
+  });
+  console.log('Delegate pending amount transaction success');
+
+  result = await world.query({
+    callee: stakingProviderDelegationContract,
+    funcName: 'getTotalActiveStake',
+  });
+
+  assert(d.U().topDecode(result.returnData[0]) === 11290000000000000000000n); // staked increased by 40 EGLD
+
+  console.log('Liquid staking account balance before rewards', await liquidStakingContract.getAccountBalance());
+
+  // Move forward 5 epochs
+  await world.generateBlocks(20 * 5);
+
+  const tx = await admin.callContract({
+    callee: liquidStakingContract,
+    funcName: 'claimRewardsFrom',
+    gasLimit: 45_000_000,
+    funcArgs: [
+      stakingProviderDelegationContract,
+    ],
+  });
+  console.log('Claim rewards from transaction success', tx.tx);
+
+  console.log('Liquid staking account balance after rewards', await liquidStakingContract.getAccountBalance());
+
+  result = await world.query({
+    callee: liquidStakingContract,
+    funcName: 'getDelegationContractData',
+    funcArgs: [
+      stakingProviderDelegationContract,
+    ],
+  });
+  delegationContractData = delegationContractDataDecoder.topDecode(result.returnData[0]);
+  console.log('Delegation contract data', delegationContractData);
+
+  const kvs = await liquidStakingContract.getAccountWithKvs();
+  const rewardsReserve = d.U().topDecode(kvs.kvs[e.Str('rewardsReserve').toTopHex()]);
+  console.log('Rewards reserve', rewardsReserve);
+  // const stringKvs = Object.keys(kvs.kvs).map((value) => d.Str().topDecode(value));
+  // console.log('Liquid staking account balance', stringKvs.join('\n'));
+
+  await admin.callContract({
+    callee: liquidStakingContract,
+    funcName: 'delegateRewards',
+    gasLimit: 45_000_000,
+    funcArgs: [
+      e.U(rewardsReserve),
+    ]
+  });
+  console.log('Delegate rewards transaction success');
 
   // Checking of balances is not reliable currently, since on subsequent running of tests the gas cost paid can differ
   // assertAccount(await alice.getAccountWithKvs(), {
@@ -242,4 +308,4 @@ test('Test', async () => {
   const { stakingProviderDelegationContract } = await deployDelegationProvider();
 
   await setupLiquidStaking(stakingProviderDelegationContract);
-}, { timeout: 60_000 });
+}, { timeout: 0 });
