@@ -28,7 +28,7 @@ beforeEach(async () => {
     LIQUID_STAKING_CONTRACT_ADDRESS,
   );
   world = await CSWorld.start({
-    // verbose: true,
+    verbose: true,
   });
 
   // Wallets always need EGLD balance to pay for fees
@@ -42,7 +42,7 @@ beforeEach(async () => {
     balance: '4001000000000000000000000', // 4,001,000 EGLD
   });
   bob = await world.createWallet({
-    balance: '10000000000000000000', // 10 EGLD
+    balance: '4001000000000000000000000', // 4,001,000 EGLD
   });
   admin = await world.newWallet(new DummySigner(ADMIN_ADDRESS));
   await admin.setAccount({
@@ -187,7 +187,10 @@ const setupLiquidStaking = async (stakingProviderDelegationContract: SContract) 
   });
   console.log('Whitelisted delegation contract');
 
-  let tx = await alice.callContract({
+  console.log('alice user address (shard 1)', alice.toString());
+  console.log('bob user address (shard 2)', bob.toString());
+  // This remains pending forever but works with user `alice`, even though they are created the same way
+  let tx = await bob.callContract({
     callee: liquidStakingContract,
     funcName: 'delegate',
     value: 4000000000000000000000000n, // 4,000,000 EGLD,
